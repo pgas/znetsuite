@@ -1,0 +1,12 @@
+build/
+bin/
+*.obj
+*.OBJ
+*.com
+*.lst
+*.hex
+*.asm
+*.sym
+*exec.*
+$$*
+.DS_Store
