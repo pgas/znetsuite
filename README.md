@@ -6,7 +6,7 @@ CP/M & RomWBW networking and small-web utility suite for Z80 systems.
 
 - RomWBW repository (defaults to `../RomWBW` or configure via `ROMWBW=/path/to/RomWBW`).
 - Host build environment with `make` and RomWBW host tools (`zxcc`, HI-TECH C).
-- Python 3.8+ on the host for the bridge simulator (`sim_bridge.py`).
+- Optional: the `ttl2wifi` repository (`../ttl2wifi`) and Python 3.8+ for the SimH bridge emulator.
 
 ## Building
 
@@ -43,57 +43,18 @@ Applications include only the specific headers they require:
 - **`term` ([`include/term.h`](include/term.h), [`lib/term.c`](lib/term.c))**: High-speed, zero-overhead VT100/ANSI terminal handling backed directly by `CIO_CONSOLE`. Provides escape code macros, cursor and screen positioning, text attributes and colors, keystroke decoding (escape sequence parser for arrows, PgUp/PgDn, Home/End, Back-Tab), and dynamic terminal size detection via DSR Cursor Position Report (`\033[999;999H\033[6n`).
 - **`fmt` ([`include/fmt.h`](include/fmt.h), [`lib/fmt.c`](lib/fmt.c))**: Text formatting, number presentation, and hex/integer parsing library. Provides hex parsing (`fmt_parse_hex`), auto-detected number parsing (`fmt_parse_num`), fast integer and hex rendering (`fmt_int`, `fmt_uint`, `fmt_hex8`, `fmt_hex16`), human-readable byte sizes (`fmt_size`), whitespace trimming (`fmt_trim`), case conversions (`fmt_lwr`, `fmt_upr`), and token extraction from the CP/M command tail at `0x0080` (`fmt_cpm_arg`).
 
-## Software Bridge Emulator (`sim_bridge.py`)
+## Bridge Emulator & SimH
 
-[`sim_bridge.py`](sim_bridge.py) is a host-side software simulator for the Raspberry Pi Pico W `ttl2wifi` bridge. It implements the exact same Hayes AT and extended AT+ command set:
-
-| Command | Description |
-|---|---|
-| `AT` | Attention check (returns `OK`) |
-| `ATI` / `ATI0` | Bridge identity, IP, and settings |
-| `AT?` / `AT+HELP` | Full command summary |
-| `ATE0` / `ATE1` | Local echo off / on |
-| `AT&K0` / `&K3` / `&K4` | Flow control mode (None / HW RTS-CTS / SW XON-XOFF) |
-| `AT+PAGE=<lines>` | Screen pager (0 = off) |
-| `AT+WSTAT` / `+WSCAN` | Wi-Fi status and access point scan |
-| `AT+WDNS="host"` | DNS lookup |
-| `AT+TIME` | Network UTC time sync |
-| `AT+GEMINI="url"` | Real TLS Gemini fetch (numbers '=>' links `[ 1]`..`[ N]`) |
-| `AT+GOPHER="url"` | Real TCP Gopher fetch (port 70, numbers links `[ 1]`..`[ N]`) |
-| `AT+GO=<n>[,"qry"]` | Follow numbered link `n` from the current page |
-| `AT+BACK` | Navigate back to previous page in URL history |
-| `AT+LINKS` | Display list of numbered links from current page |
-| `AT+HTTPGET="url"` | Real HTTP/HTTPS document fetch |
-
-### Usage Modes
+The host-side `ttl2wifi` bridge emulator, the SimH runner and the small RomWBW patch needed for the
+ACIA serial port now live in the **ttl2wifi** repository (`../ttl2wifi/sim/`, see its `README.md`).
+It runs the same AT command code as the Pico W firmware.
 
 ```sh
-# 1. TCP Server (for SimH AltairZ80 SIO connection, default port 9999)
-./sim_bridge.py --tcp 9999
-
-# 2. Pseudo-terminal (creates a /dev/ttys* device pair for minicom or direct serial)
-./sim_bridge.py --pty
-
-# 3. Interactive stdio (type AT commands directly in terminal)
-./sim_bridge.py --stdio
+make                          # build ZTALK.COM / ZGMI.COM into ./bin/
+../ttl2wifi/sim/run_sim.sh    # boot RomWBW in SimH with the bridge on CIO unit 1
 ```
 
-## Running in the RomWBW SimH Simulator
-
-A single turnkey runner script [`sim/run_sim.sh`](sim/run_sim.sh) handles everything out-of-tree:
-- Prepares an isolated working disk image in `build/sim/hd512.img` (never modifying master images).
-- Automatically updates `ZTALK.COM` and `ZGMI.COM` onto the working disk.
-- Spawns the background TTL2WiFi bridge emulator (`sim_bridge.py`) connecting to SimH `M2SIO0` on port 9999.
-- Launches the `altairz80` simulator with dual serial support (`Char 0` SSER console, `Char 1` ACIA bridge).
-
-```sh
-./sim/run_sim.sh
-```
-
-At the boot prompt:
-- Type `2` to boot the hard disk into CP/M (`A>`).
-- Run `ZTALK 01` to test the bridge AT commands.
-- Run `ZGMI geminiprotocol.net` to browse Gemini capsules.
+At the boot prompt type `2` for CP/M (`A>`), then run `ZTALK 01` or `ZGMI geminiprotocol.net`.
 
 ## Hardware Parity with SC131 Z180 Pocket Computer
 
