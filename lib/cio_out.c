@@ -20,3 +20,4 @@ unsigned char ch;
 #endasm
   /* clang-format on */
 }
+

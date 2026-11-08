@@ -20,3 +20,4 @@ unsigned char u;
 #endasm
   /* clang-format on */
 }
+

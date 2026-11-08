@@ -8,14 +8,14 @@
  * License: GNU Affero General Public License v3 (AGPL-3.0-or-later)
  */
 
-#include <string.h>
 #include "cio.h"
-#include "term.h"
 #include "fmt.h"
+#include "term.h"
+#include <string.h>
 
-#define MAX_TEXT        20000
-#define MAX_LINES       700
-#define MAX_LINKS       120
+#define MAX_TEXT 20000
+#define MAX_LINES 700
+#define MAX_LINKS 120
 
 /* Global document buffer */
 char text_pool[MAX_TEXT];
@@ -38,20 +38,23 @@ unsigned char target_unit;
 static unsigned char *tail = (unsigned char *)0x0080;
 
 /* Parse link index: looks for "[ n]" or "[n]" or "=>" */
-parse_link_num(s)
-char *s;
+parse_link_num(s) char *s;
 {
   int n = 0;
-  while (*s == ' ') s++;
+  while (*s == ' ')
+    s++;
   if (*s == '[') {
     s++;
-    while (*s == ' ') s++;
-    if (*s < '0' || *s > '9') return 0;
+    while (*s == ' ')
+      s++;
+    if (*s < '0' || *s > '9')
+      return 0;
     while (*s >= '0' && *s <= '9') {
       n = n * 10 + (*s - '0');
       s++;
     }
-    if (*s == ']') return n;
+    if (*s == ']')
+      return n;
   } else if (s[0] == '=' && s[1] == '>') {
     return total_links + 1;
   }
@@ -59,8 +62,7 @@ char *s;
 }
 
 /* Clear document buffer */
-clear_doc()
-{
+clear_doc() {
   text_pool_len = 0;
   total_lines = 0;
   total_links = 0;
@@ -69,16 +71,17 @@ clear_doc()
 }
 
 /* Add a line of text to document buffer */
-add_doc_line(line)
-char *line;
+add_doc_line(line) char *line;
 {
   int len;
   int lid;
 
-  if (total_lines >= MAX_LINES) return 0;
+  if (total_lines >= MAX_LINES)
+    return 0;
 
   len = strlen(line);
-  if (text_pool_len + len + 1 >= MAX_TEXT) return 0;
+  if (text_pool_len + len + 1 >= MAX_TEXT)
+    return 0;
 
   strcpy(&text_pool[text_pool_len], line);
   doc_lines[total_lines] = &text_pool[text_pool_len];
@@ -96,8 +99,7 @@ char *line;
 }
 
 /* Display loading status on bottom row */
-show_status(msg)
-char *msg;
+show_status(msg) char *msg;
 {
   term_goto(term_rows, 1);
   term_attr(TERM_ATTR_REVERSE);
@@ -109,8 +111,7 @@ char *msg;
 }
 
 /* Initialize serial bridge: sync AT, ATE0, AT+PAGE=0 */
-bridge_init(u)
-unsigned char u;
+bridge_init(u) unsigned char u;
 {
   int attempt;
   cio_flush(u);
@@ -118,7 +119,8 @@ unsigned char u;
   /* Send dummy attention checks */
   for (attempt = 0; attempt < 3; attempt++) {
     cio_send_cmd(u, "AT");
-    if (cio_wait_ok(u, 20000L)) break;
+    if (cio_wait_ok(u, 20000L))
+      break;
   }
 
   /* Disable command echo */
@@ -134,8 +136,7 @@ unsigned char u;
 }
 
 /* Fetch and process a command stream from bridge */
-fetch_stream(u, cmd)
-unsigned char u;
+fetch_stream(u, cmd) unsigned char u;
 char *cmd;
 {
   char line[160];
@@ -176,7 +177,8 @@ char *cmd;
       char *p = strchr(line, ':');
       if (p) {
         p++;
-        while (*p == ' ') p++;
+        while (*p == ' ')
+          p++;
         strncpy(current_url, p, sizeof(current_url) - 1);
         current_url[sizeof(current_url) - 1] = '\0';
       }
@@ -213,8 +215,7 @@ char *cmd;
 }
 
 /* Ensure selected link is visible within screen lines */
-ensure_link_visible()
-{
+ensure_link_visible() {
   int screen_lines = term_rows - 2;
   if (cur_link >= 0 && cur_link < total_links) {
     int l_line = links[cur_link].line;
@@ -226,9 +227,9 @@ ensure_link_visible()
   }
 }
 
-/* Render the full screen: Header (row 1), Text (2..term_rows-1), Status (term_rows) */
-render_screen()
-{
+/* Render the full screen: Header (row 1), Text (2..term_rows-1), Status
+ * (term_rows) */
+render_screen() {
   int r;
   int line_idx;
   int screen_lines = term_rows - 2;
@@ -306,8 +307,7 @@ render_screen()
 }
 
 /* Main interaction loop */
-event_loop(u)
-unsigned char u;
+event_loop(u) unsigned char u;
 {
   char cmd_buf[64];
   char num_buf[16];
@@ -346,7 +346,8 @@ unsigned char u;
       doc_top += screen_lines / 2;
       if (doc_top + screen_lines > total_lines)
         doc_top = total_lines - screen_lines;
-      if (doc_top < 0) doc_top = 0;
+      if (doc_top < 0)
+        doc_top = 0;
       render_screen();
       break;
 
@@ -354,7 +355,8 @@ unsigned char u;
     case 'u':
     case KEY_CTRL_U:
       doc_top -= screen_lines / 2;
-      if (doc_top < 0) doc_top = 0;
+      if (doc_top < 0)
+        doc_top = 0;
       render_screen();
       break;
 
@@ -365,7 +367,8 @@ unsigned char u;
       doc_top += screen_lines - 1;
       if (doc_top + screen_lines > total_lines)
         doc_top = total_lines - screen_lines;
-      if (doc_top < 0) doc_top = 0;
+      if (doc_top < 0)
+        doc_top = 0;
       render_screen();
       break;
 
@@ -373,7 +376,8 @@ unsigned char u;
     case KEY_CTRL_B:
     case KEY_PGUP:
       doc_top -= screen_lines - 1;
-      if (doc_top < 0) doc_top = 0;
+      if (doc_top < 0)
+        doc_top = 0;
       render_screen();
       break;
 
@@ -386,7 +390,8 @@ unsigned char u;
     /* Vim: jump to bottom */
     case 'G':
       doc_top = total_lines - screen_lines;
-      if (doc_top < 0) doc_top = 0;
+      if (doc_top < 0)
+        doc_top = 0;
       render_screen();
       break;
 
@@ -466,8 +471,7 @@ unsigned char u;
   }
 }
 
-main()
-{
+main() {
   char arg1[128];
   char arg2[128];
   char fetch_cmd[160];
@@ -487,8 +491,8 @@ main()
   target_unit = 1; /* Default to auxiliary serial port (Port B / Pico W) */
 
   /* Parse CP/M command tail */
-  if (fmt_cpm_arg(tail, 0, arg1, sizeof(arg1)) <= 0 ||
-      arg1[0] == '?' || (arg1[0] == '/' && arg1[1] == '?')) {
+  if (fmt_cpm_arg(tail, 0, arg1, sizeof(arg1)) <= 0 || arg1[0] == '?' ||
+      (arg1[0] == '/' && arg1[1] == '?')) {
     cio_printf("Usage: ZGMI [-u unit] <url>\n");
     cio_printf("Examples:\n");
     cio_printf("  ZGMI gemini://geminiprotocol.net\n");
@@ -511,8 +515,9 @@ main()
   }
 
   if (target_unit >= dev_cnt) {
-    cio_printf("Error: Device unit %02X out of range (system has %d CIO units)\n",
-           (int)target_unit, (int)dev_cnt);
+    cio_printf(
+        "Error: Device unit %02X out of range (system has %d CIO units)\n",
+        (int)target_unit, (int)dev_cnt);
     return 1;
   }
 
@@ -542,8 +547,8 @@ main()
   }
 
   fmt_hex8(arg2, target_unit, 0);
-  cio_printf("Connecting to bridge on CIO unit %s (%s)...\n",
-         arg2, hbios_devname(dtype));
+  cio_printf("Connecting to bridge on CIO unit %s (%s)...\n", arg2,
+             hbios_devname(dtype));
   if (!bridge_init(target_unit)) {
     cio_printf("Warning: No response to AT check; continuing anyway...\n");
   }

@@ -27,3 +27,4 @@ char *s;
 
   return neg ? -val : val;
 }
+

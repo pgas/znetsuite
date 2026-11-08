@@ -13,3 +13,4 @@ char *cmd;
   cio_out(u, '\r');
   cio_out(u, '\n');
 }
+

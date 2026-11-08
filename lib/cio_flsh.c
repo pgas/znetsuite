@@ -16,3 +16,4 @@ cio_flush(u) unsigned char u;
     }
   }
 }
+

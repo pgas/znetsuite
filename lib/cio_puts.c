@@ -13,3 +13,4 @@ char *s;
     cio_out(u, (unsigned char)*s++);
   }
 }
+

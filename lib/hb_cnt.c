@@ -17,3 +17,4 @@ int hbios_ciocnt() {
 #endasm
   /* clang-format on */
 }
+

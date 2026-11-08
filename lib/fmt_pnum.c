@@ -26,3 +26,4 @@ char *s;
 
   return fmt_parse_int(s);
 }
+

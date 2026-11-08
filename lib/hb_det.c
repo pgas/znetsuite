@@ -15,3 +15,4 @@ int hbios_detect() {
     return 1;
   return 0;
 }
+

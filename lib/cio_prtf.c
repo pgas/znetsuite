@@ -8,8 +8,7 @@
 #include <stdarg.h>
 
 /* Console output with LF -> CRLF translation */
-void cio_cputc(c)
-char c;
+void cio_cputc(c) char c;
 {
   if (c == '\n')
     cio_out(CIO_CONSOLE, '\r');
@@ -17,24 +16,26 @@ char c;
 }
 
 /* Write null-terminated string to console */
-void cio_cputs(s)
-char *s;
+void cio_cputs(s) char *s;
 {
   while (*s) {
     cio_cputc(*s++);
   }
 }
 
-void cio_cputhex(val, width)
-unsigned int val;
+void cio_cputhex(val, width) unsigned int val;
 int width;
 {
   static char hex[] = "0123456789ABCDEF";
   int digits = 1;
-  if (val > 0xFFF) digits = 4;
-  else if (val > 0xFF) digits = 3;
-  else if (val > 0xF) digits = 2;
-  if (width < digits) width = digits;
+  if (val > 0xFFF)
+    digits = 4;
+  else if (val > 0xFF)
+    digits = 3;
+  else if (val > 0xF)
+    digits = 2;
+  if (width < digits)
+    width = digits;
   if (width > 2) {
     cio_cputc(hex[(val >> 12) & 0x0F]);
     cio_cputc(hex[(val >> 8) & 0x0F]);
@@ -45,8 +46,7 @@ int width;
   cio_cputc(hex[val & 0x0F]);
 }
 
-void cio_cputdec(val)
-int val;
+void cio_cputdec(val) int val;
 {
   char buf[10];
   int i = 0;
@@ -67,8 +67,7 @@ int val;
   }
 }
 
-void cio_printf(fmt)
-char *fmt;
+void cio_printf(fmt) char *fmt;
 {
   va_list ap;
   char *p;
@@ -95,11 +94,16 @@ char *fmt;
     }
     if (*p == 's') {
       s = va_arg(ap, char *);
-      if (!s) s = "(null)";
+      if (!s)
+        s = "(null)";
       if (left_align && width > 0) {
         int len = 0;
-        while (*s) { cio_cputc(*s++); len++; }
-        while (len++ < width) cio_cputc(' ');
+        while (*s) {
+          cio_cputc(*s++);
+          len++;
+        }
+        while (len++ < width)
+          cio_cputc(' ');
       } else {
         cio_cputs(s);
       }
