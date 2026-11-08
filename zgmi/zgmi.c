@@ -8,7 +8,6 @@
  * License: GNU Affero General Public License v3 (AGPL-3.0-or-later)
  */
 
-#include <stdio.h>
 #include <string.h>
 #include "cio.h"
 #include "term.h"
@@ -107,100 +106,6 @@ char *msg;
   term_putc(' ');
   term_reset();
   term_clear_eol();
-}
-
-/* Read character with timeout loop; checks abort_u for abort_ch */
-int cio_get_timeout(u, max_loops, abort_u, abort_ch)
-unsigned char u;
-long max_loops;
-unsigned char abort_u;
-int abort_ch;
-{
-  long count;
-  for (count = 0; count < max_loops; count++) {
-    if (abort_ch >= 0 && cio_ist(abort_u)) {
-      int ck = cio_in(abort_u) & 0xFF;
-      if (ck == abort_ch)
-        return -2; /* User abort */
-    }
-    if (cio_ist(u)) {
-      return cio_in(u) & 0xFF;
-    }
-  }
-  return -1; /* Timed out */
-}
-
-/* Read one line from unit ending in '\n' (strips '\r') */
-int cio_readline(u, buf, maxlen, max_loops, abort_u, abort_ch)
-unsigned char u;
-char *buf;
-int maxlen;
-long max_loops;
-unsigned char abort_u;
-int abort_ch;
-{
-  int pos = 0;
-  int ch;
-
-  while (1) {
-    ch = cio_get_timeout(u, max_loops, abort_u, abort_ch);
-    if (ch == -2)
-      return -2; /* Aborted */
-    if (ch == -1) {
-      if (pos > 0) {
-        buf[pos] = '\0';
-        return pos;
-      }
-      return -1; /* Timed out */
-    }
-    if (ch == '\r')
-      continue;
-    if (ch == '\n') {
-      buf[pos] = '\0';
-      return pos;
-    }
-    if (pos < maxlen - 1) {
-      buf[pos++] = (char)ch;
-    }
-  }
-}
-
-/* Send string followed by CRLF */
-cio_send_cmd(u, cmd)
-unsigned char u;
-char *cmd;
-{
-  cio_puts(u, cmd);
-  cio_out(u, '\r');
-  cio_out(u, '\n');
-}
-
-/* Wait for OK or ERROR response from AT modem/bridge */
-int cio_wait_ok(u, max_loops)
-unsigned char u;
-long max_loops;
-{
-  char line[64];
-  int pos = 0;
-  int ch;
-
-  while (1) {
-    ch = cio_get_timeout(u, max_loops, 0, -1);
-    if (ch < 0)
-      return 0;
-    if (ch == '\r')
-      continue;
-    if (ch == '\n') {
-      line[pos] = '\0';
-      if (strcmp(line, "OK") == 0)
-        return 1;
-      if (strncmp(line, "ERROR", 5) == 0)
-        return 0;
-      pos = 0;
-    } else if (pos < 62) {
-      line[pos++] = (char)ch;
-    }
-  }
 }
 
 /* Initialize serial bridge: sync AT, ATE0, AT+PAGE=0 */
@@ -571,10 +476,10 @@ main()
   unsigned char dev_cnt;
   unsigned char dtype, dmode, dbase;
 
-  printf("\nZGMI v1.0 - Gemini Protocol Client (ZNetSuite)\n");
+  cio_printf("\nZGMI v1.0 - Gemini Protocol Client (ZNetSuite)\n");
 
   if (!hbios_detect()) {
-    printf("Error: RomWBW HBIOS not detected.\n");
+    cio_printf("Error: RomWBW HBIOS not detected.\n");
     return 1;
   }
 
@@ -584,11 +489,11 @@ main()
   /* Parse CP/M command tail */
   if (fmt_cpm_arg(tail, 0, arg1, sizeof(arg1)) <= 0 ||
       arg1[0] == '?' || (arg1[0] == '/' && arg1[1] == '?')) {
-    printf("Usage: ZGMI [-u unit] <url>\n");
-    printf("Examples:\n");
-    printf("  ZGMI gemini://geminiprotocol.net\n");
-    printf("  ZGMI gemini.circumlunar.space\n");
-    printf("  ZGMI -u 1 geminiprotocol.net\n");
+    cio_printf("Usage: ZGMI [-u unit] <url>\n");
+    cio_printf("Examples:\n");
+    cio_printf("  ZGMI gemini://geminiprotocol.net\n");
+    cio_printf("  ZGMI gemini.circumlunar.space\n");
+    cio_printf("  ZGMI -u 1 geminiprotocol.net\n");
     return 0;
   }
 
@@ -596,7 +501,7 @@ main()
   if (strcmp(arg1, "-u") == 0 || strcmp(arg1, "-U") == 0) {
     if (fmt_cpm_arg(tail, 1, arg2, sizeof(arg2)) <= 0 ||
         fmt_cpm_arg(tail, 2, arg1, sizeof(arg1)) <= 0) {
-      printf("Error: Missing unit or URL for -u option.\n");
+      cio_printf("Error: Missing unit or URL for -u option.\n");
       return 1;
     }
     target_unit = (unsigned char)fmt_parse_hex(arg2);
@@ -606,13 +511,13 @@ main()
   }
 
   if (target_unit >= dev_cnt) {
-    printf("Error: Device unit %02X out of range (system has %d CIO units)\n",
+    cio_printf("Error: Device unit %02X out of range (system has %d CIO units)\n",
            (int)target_unit, (int)dev_cnt);
     return 1;
   }
 
   if (hbios_device(target_unit, &dtype, &dmode, &dbase) != 0) {
-    printf("Error: Device unit %02X not available.\n", (int)target_unit);
+    cio_printf("Error: Device unit %02X not available.\n", (int)target_unit);
     return 1;
   }
 
@@ -637,10 +542,10 @@ main()
   }
 
   fmt_hex8(arg2, target_unit, 0);
-  printf("Connecting to bridge on CIO unit %s (%s)...\n",
+  cio_printf("Connecting to bridge on CIO unit %s (%s)...\n",
          arg2, hbios_devname(dtype));
   if (!bridge_init(target_unit)) {
-    printf("Warning: No response to AT check; continuing anyway...\n");
+    cio_printf("Warning: No response to AT check; continuing anyway...\n");
   }
 
   /* Query VT100 / ANSI terminal dimensions via DSR CPR */

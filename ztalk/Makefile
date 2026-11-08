@@ -8,7 +8,7 @@ BIN_DIR = $(ROOT_DIR)/bin
 include $(ROOT_DIR)/rules.mk
 
 TARGET = $(BIN_DIR)/ztalk.com
-LIB_OBJS = $(LIB_BUILD_DIR)/cio.obj $(LIB_BUILD_DIR)/cpm.obj
+LIB_TARGET = $(LIB_BUILD_DIR)/libznet.lib
 
 all: $(TARGET)
 
@@ -19,10 +19,10 @@ $(BUILD_DIR)/ztalk.obj: ztalk.c $(INCLUDE_DIR)/cio.h $(INCLUDE_DIR)/fmt.h
 	@OUT=$$(cd $(BUILD_DIR) && $(ZXCC) $(CC) --C $(HITECHOPTIONS) $(abspath $<) 2>&1); \
 	$(call HITECHSTATUS,[ -s $@ ] || [ -s $(BUILD_DIR)/ztalk.OBJ ])
 
-$(TARGET): $(BUILD_DIR)/ztalk.obj $(LIB_OBJS)
+$(TARGET): $(BUILD_DIR)/ztalk.obj $(LIB_TARGET)
 	@mkdir -p $(BIN_DIR)
 	@printf "[  LNK  ] ==> %-30s " "ztalk.com"
-	@OUT=$$(cd $(BUILD_DIR) && $(ZXCC) $(CC) --V --N ztalk.obj ../lib/cio.obj ../lib/cpm.obj 2>&1); \
+	@OUT=$$(cd $(BUILD_DIR) && $(ZXCC) $(CC) --V --N ztalk.obj ../lib/libznet.lib 2>&1); \
 	$(call HITECHSTATUS,[ -s $(BUILD_DIR)/ztalk.com ])
 	@cp $(BUILD_DIR)/ztalk.com $(TARGET)
 	@echo "Copying ztalk.com to ../bin"

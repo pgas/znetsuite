@@ -1,43 +1,11 @@
 /*
- * CPM.C - CP/M Command Tail & Hex Parsing
- *
+ * FMT_CPM.C - CP/M Command Tail Argument Parser
  * Part of ZNetSuite.
  * License: GNU Affero General Public License v3 (AGPL-3.0-or-later)
  */
 
 #include "fmt.h"
 
-/* Parse hexadecimal string (supports "$1F", "0x1F", or "1F") */
-int fmt_parse_hex(s)
-char *s;
-{
-  int val = 0;
-
-  while (*s == ' ' || *s == '\t') s++;
-
-  if (*s == '$') {
-    s++;
-  } else if (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) {
-    s += 2;
-  }
-
-  while (*s) {
-    char c = *s++;
-    if (c >= '0' && c <= '9') {
-      val = (val << 4) | (c - '0');
-    } else if (c >= 'a' && c <= 'f') {
-      val = (val << 4) | (c - 'a' + 10);
-    } else if (c >= 'A' && c <= 'F') {
-      val = (val << 4) | (c - 'A' + 10);
-    } else {
-      break;
-    }
-  }
-
-  return val;
-}
-
-/* Extract arg_idx-th (0-based) token from CP/M command tail (buffer at 0x0080) */
 int fmt_cpm_arg(tail, arg_idx, buf, maxlen)
 unsigned char *tail;
 int arg_idx;

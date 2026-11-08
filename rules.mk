@@ -10,6 +10,7 @@ ZXCC = $(BINDIR)/zxcc
 
 HITECHDIR = $(ROMWBW)/Source/Images/d_hitechc/u0
 CC = $(HITECHDIR)/C
+LIBR = $(HITECHDIR)/LIBR
 HITECHOPTIONS = --N
 
 export CPMDIR80 = $(TOOLS)/cpm/

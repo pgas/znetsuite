@@ -8,7 +8,6 @@
 
 #include "term.h"
 #include "cio.h"
-#include <stdio.h>
 
 /* Terminal dimensions (defaults to standard 80x24) */
 int term_rows = 24;

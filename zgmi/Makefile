@@ -8,7 +8,7 @@ BIN_DIR = $(ROOT_DIR)/bin
 include $(ROOT_DIR)/rules.mk
 
 TARGET = $(BIN_DIR)/zgmi.com
-LIB_OBJS = $(LIB_BUILD_DIR)/cio.obj $(LIB_BUILD_DIR)/term.obj $(LIB_BUILD_DIR)/fmt.obj
+LIB_TARGET = $(LIB_BUILD_DIR)/libznet.lib
 
 all: $(TARGET)
 
@@ -19,10 +19,10 @@ $(BUILD_DIR)/zgmi.obj: zgmi.c $(INCLUDE_DIR)/cio.h $(INCLUDE_DIR)/term.h $(INCLU
 	@OUT=$$(cd $(BUILD_DIR) && $(ZXCC) $(CC) --C $(HITECHOPTIONS) $(abspath $<) 2>&1); \
 	$(call HITECHSTATUS,[ -s $@ ] || [ -s $(BUILD_DIR)/zgmi.OBJ ])
 
-$(TARGET): $(BUILD_DIR)/zgmi.obj $(LIB_OBJS)
+$(TARGET): $(BUILD_DIR)/zgmi.obj $(LIB_TARGET)
 	@mkdir -p $(BIN_DIR)
 	@printf "[  LNK  ] ==> %-30s " "zgmi.com"
-	@OUT=$$(cd $(BUILD_DIR) && $(ZXCC) $(CC) --V --N zgmi.obj ../lib/cio.obj ../lib/term.obj ../lib/fmt.obj 2>&1); \
+	@OUT=$$(cd $(BUILD_DIR) && $(ZXCC) $(CC) --V --N zgmi.obj ../lib/libznet.lib 2>&1); \
 	$(call HITECHSTATUS,[ -s $(BUILD_DIR)/zgmi.com ])
 	@cp $(BUILD_DIR)/zgmi.com $(TARGET)
 	@echo "Copying zgmi.com to ../bin"
