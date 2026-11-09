@@ -4,130 +4,45 @@
  * Minimalist Gemini client communicating with an AT-command serial-to-Wi-Fi
  * bridge (ttl2wifi / Pico W) on RomWBW character I/O.
  *
+ * Features:
+ * - Flicker-free differential VT100/ANSI screen rendering & hardware scroll
+ * - Sliding RAM window + lazy CP/M BDOS disk spooling for large documents
+ *   with full forward/backward scrollback on 32K and 62K TPA devices
+ * - Plain-text configuration file (ZGMI.CFG) + CLI overrides
+ *
  * Part of ZNetSuite.
  * License: GNU Affero General Public License v3 (AGPL-3.0-or-later)
  */
 
 #include "cio.h"
 #include "fmt.h"
+#include "spool.h"
 #include "term.h"
 #include <string.h>
 
-#define MAX_TEXT 20000
-#define MAX_LINES 700
-#define MAX_LINKS 120
-
-/* Global document buffer */
-char text_pool[MAX_TEXT];
-int text_pool_len;
-char *doc_lines[MAX_LINES];
-int total_lines;
-
-struct link_entry {
-  int line;
-  int id;
-} links[MAX_LINKS];
-int total_links;
-int cur_link;
-
-int doc_top;
-char current_url[128];
-unsigned char target_unit;
+/* Shared static buffers to keep Z80 stack frames small (< 128 bytes) */
+static char rx_line[160];
+static char cmd_buf[160];
+static char val_buf[128];
 
 /* Pointer to CP/M command tail buffer */
 static unsigned char *tail = (unsigned char *)0x0080;
 
-/* Parse link index: looks for "[ n]" or "[n]" or "=>" */
-parse_link_num(s) char *s;
-{
-  int n = 0;
-  while (*s == ' ')
-    s++;
-  if (*s == '[') {
-    s++;
-    while (*s == ' ')
-      s++;
-    if (*s < '0' || *s > '9')
-      return 0;
-    while (*s >= '0' && *s <= '9') {
-      n = n * 10 + (*s - '0');
-      s++;
-    }
-    if (*s == ']')
-      return n;
-  } else if (s[0] == '=' && s[1] == '>') {
-    return total_links + 1;
-  }
-  return 0;
-}
-
-/* Clear document buffer */
-clear_doc() {
-  text_pool_len = 0;
-  total_lines = 0;
-  total_links = 0;
-  cur_link = -1;
-  doc_top = 0;
-}
-
-/* Add a line of text to document buffer */
-add_doc_line(line) char *line;
-{
-  int len;
-  int lid;
-
-  if (total_lines >= MAX_LINES)
-    return 0;
-
-  len = strlen(line);
-  if (text_pool_len + len + 1 >= MAX_TEXT)
-    return 0;
-
-  strcpy(&text_pool[text_pool_len], line);
-  doc_lines[total_lines] = &text_pool[text_pool_len];
-  text_pool_len += len + 1;
-
-  lid = parse_link_num(line);
-  if (lid > 0 && total_links < MAX_LINKS) {
-    links[total_links].line = total_lines;
-    links[total_links].id = lid;
-    total_links++;
-  }
-
-  total_lines++;
-  return 1;
-}
-
-/* Display loading status on bottom row */
-show_status(msg) char *msg;
-{
-  term_goto(term_rows, 1);
-  term_attr(TERM_ATTR_REVERSE);
-  term_putc(' ');
-  term_puts(msg);
-  term_putc(' ');
-  term_reset();
-  term_clear_eol();
-}
-
 /* Initialize serial bridge: sync AT, ATE0, AT+PAGE=0 */
-bridge_init(u) unsigned char u;
+int bridge_init(u) unsigned char u;
 {
   int attempt;
   cio_flush(u);
 
-  /* Send dummy attention checks */
   for (attempt = 0; attempt < 3; attempt++) {
     cio_send_cmd(u, "AT");
     if (cio_wait_ok(u, 20000L))
       break;
   }
 
-  /* Disable command echo */
   cio_send_cmd(u, "ATE0");
   cio_wait_ok(u, 20000L);
 
-  /* Disable screen pager on bridge */
   cio_send_cmd(u, "AT+PAGE=0");
   cio_wait_ok(u, 20000L);
 
@@ -139,19 +54,24 @@ bridge_init(u) unsigned char u;
 fetch_stream(u, cmd) unsigned char u;
 char *cmd;
 {
-  char line[160];
   int res;
+  int was_spooling = 0;
+  char *p;
 
   show_status("Connecting to bridge...");
   cio_flush(u);
   cio_send_cmd(u, cmd);
 
   clear_doc();
+  doc_top = 0;
+  header_dirty = 1;
+  prev_doc_top = -1;
+  prev_cur_link = -1;
 
-  while (1) {
-    res = cio_readline(u, line, sizeof(line), 100000L, CIO_CONSOLE, KEY_CTRL_C);
+  for (;;) {
+    res = cio_readline(u, rx_line, sizeof(rx_line), 100000L, CIO_CONSOLE,
+                       KEY_CTRL_C);
     if (res == -2) {
-      /* User aborted with Ctrl-C */
       cio_out(u, KEY_CTRL_C);
       add_doc_line("[Download aborted by user]");
       break;
@@ -163,18 +83,17 @@ char *cmd;
       break;
     }
 
-    /* Check for termination */
-    if (strcmp(line, "OK") == 0) {
+    if (strcmp(rx_line, "OK") == 0) {
       break;
     }
-    if (strncmp(line, "ERROR", 5) == 0) {
-      add_doc_line(line);
+    if (strncmp(rx_line, "ERROR", 5) == 0) {
+      add_doc_line(rx_line);
       break;
     }
 
     /* Track URL metadata from bridge */
-    if (strncmp(line, "+GO [", 5) == 0) {
-      char *p = strchr(line, ':');
+    if (strncmp(rx_line, "+GO [", 5) == 0) {
+      p = strchr(rx_line, ':');
       if (p) {
         p++;
         while (*p == ' ')
@@ -184,25 +103,34 @@ char *cmd;
       }
       continue;
     }
-    if (strncmp(line, "+BACK: ", 7) == 0) {
-      strncpy(current_url, line + 7, sizeof(current_url) - 1);
+    if (strncmp(rx_line, "+BACK: ", 7) == 0) {
+      strncpy(current_url, rx_line + 7, sizeof(current_url) - 1);
       current_url[sizeof(current_url) - 1] = '\0';
       continue;
     }
-    if (strncmp(line, "+REDIRECT: ", 11) == 0) {
-      strncpy(current_url, line + 11, sizeof(current_url) - 1);
+    if (strncmp(rx_line, "+REDIRECT: ", 11) == 0) {
+      strncpy(current_url, rx_line + 11, sizeof(current_url) - 1);
       current_url[sizeof(current_url) - 1] = '\0';
       continue;
     }
-    if (strncmp(line, "+GEMINI: ", 9) == 0) {
-      if (line[9] != '2') {
-        add_doc_line(line);
+    if (strncmp(rx_line, "+GEMINI: ", 9) == 0) {
+      if (rx_line[9] != '2') {
+        add_doc_line(rx_line);
       }
       continue;
     }
 
-    /* Content line */
-    add_doc_line(line);
+    if (!doc_truncated) {
+      add_doc_line(rx_line);
+      if (spool_active && !was_spooling) {
+        show_status("Spooling to disk...");
+        was_spooling = 1;
+      }
+    }
+  }
+
+  if (spool_active) {
+    spool_finish_write();
   }
 
   if (total_lines == 0) {
@@ -214,110 +142,22 @@ char *cmd;
   }
 }
 
-/* Ensure selected link is visible within screen lines */
-ensure_link_visible() {
-  int screen_lines = term_rows - 2;
-  if (cur_link >= 0 && cur_link < total_links) {
-    int l_line = links[cur_link].line;
-    if (l_line < doc_top) {
-      doc_top = l_line;
-    } else if (l_line >= doc_top + screen_lines) {
-      doc_top = l_line - screen_lines + 1;
-    }
-  }
-}
-
-/* Render the full screen: Header (row 1), Text (2..term_rows-1), Status
- * (term_rows) */
-render_screen() {
-  int r;
-  int line_idx;
-  int screen_lines = term_rows - 2;
-  int line_width = term_cols - 1;
-  char num_buf[16];
-
-  /* 1. Header line at row 1 */
-  term_home();
-  term_attr(TERM_ATTR_REVERSE);
-  term_puts(" ZGMI | ");
-  term_puts(current_url);
-  term_reset();
-  term_clear_eol();
-  term_puts("\r\n");
-
-  /* 2. Document content rows 2 to term_rows - 1 */
-  for (r = 0; r < screen_lines; r++) {
-    line_idx = doc_top + r;
-    if (line_idx < total_lines) {
-      int is_sel = (cur_link >= 0 && cur_link < total_links &&
-                    links[cur_link].line == line_idx);
-      char *s = doc_lines[line_idx];
-      int col = 0;
-
-      if (is_sel) {
-        term_attr(TERM_ATTR_REVERSE);
-      }
-
-      while (*s && col < line_width) {
-        term_putc((unsigned char)*s++);
-        col++;
-      }
-
-      if (is_sel) {
-        while (col < line_width) {
-          term_putc(' ');
-          col++;
-        }
-        term_reset();
-      }
-      term_clear_eol();
-      term_puts("\r\n");
-    } else {
-      term_puts("~");
-      term_clear_eol();
-      term_puts("\r\n");
-    }
-  }
-
-  /* 3. Status bar at bottom row */
-  term_goto(term_rows, 1);
-  term_attr(TERM_ATTR_REVERSE);
-
-  if (total_links > 0 && cur_link >= 0) {
-    term_puts(" [Link ");
-    fmt_int(num_buf, cur_link + 1);
-    term_puts(num_buf);
-    term_putc('/');
-    fmt_int(num_buf, total_links);
-    term_puts(num_buf);
-    term_puts("] ");
-  } else {
-    term_puts(" ");
-  }
-
-  term_puts("Line ");
-  fmt_int(num_buf, doc_top + 1);
-  term_puts(num_buf);
-  term_putc('/');
-  fmt_int(num_buf, total_lines);
-  term_puts(num_buf);
-  term_puts(" | j/k:scroll d/u:page Tab:link Enter:open b:back q:quit ");
-  term_reset();
-  term_clear_eol();
-}
-
 /* Main interaction loop */
 event_loop(u) unsigned char u;
 {
-  char cmd_buf[64];
-  char num_buf[16];
   int screen_lines;
+  int old_top;
+  int key;
+  int lid;
+  char num_buf[16];
 
-  render_screen();
+  term_cursor_hide();
+  update_screen(1);
 
-  while (1) {
-    int key = term_getkey();
+  for (;;) {
+    key = term_getkey();
     screen_lines = term_rows - 2;
+    old_top = doc_top;
 
     switch (key) {
     /* Vim: scroll down 1 line */
@@ -326,7 +166,7 @@ event_loop(u) unsigned char u;
     case KEY_DOWN:
       if (doc_top + screen_lines < total_lines) {
         doc_top++;
-        render_screen();
+        update_screen(0);
       }
       break;
 
@@ -336,32 +176,38 @@ event_loop(u) unsigned char u;
     case KEY_UP:
       if (doc_top > 0) {
         doc_top--;
-        render_screen();
+        update_screen(0);
       }
       break;
 
     /* Vim: half-page down */
     case 'd':
+    case 'D':
     case KEY_CTRL_D:
       doc_top += screen_lines / 2;
       if (doc_top + screen_lines > total_lines)
         doc_top = total_lines - screen_lines;
       if (doc_top < 0)
         doc_top = 0;
-      render_screen();
+      if (doc_top != old_top)
+        update_screen(0);
       break;
 
     /* Vim: half-page up */
     case 'u':
+    case 'U':
     case KEY_CTRL_U:
       doc_top -= screen_lines / 2;
       if (doc_top < 0)
         doc_top = 0;
-      render_screen();
+      if (doc_top != old_top)
+        update_screen(0);
       break;
 
     /* Vim / Pager: full page down */
     case KEY_CTRL_F:
+    case 'f':
+    case 'F':
     case ' ':
     case KEY_PGDN:
       doc_top += screen_lines - 1;
@@ -369,45 +215,67 @@ event_loop(u) unsigned char u;
         doc_top = total_lines - screen_lines;
       if (doc_top < 0)
         doc_top = 0;
-      render_screen();
+      if (doc_top != old_top)
+        update_screen(0);
       break;
 
     /* Vim / Pager: full page up */
     case KEY_CTRL_B:
+    case 'w':
+    case 'W':
     case KEY_PGUP:
       doc_top -= screen_lines - 1;
       if (doc_top < 0)
         doc_top = 0;
-      render_screen();
+      if (doc_top != old_top)
+        update_screen(0);
+      break;
+
+    /* Edit current URL on line above helpbar */
+    case 'e':
+    case 'E':
+      if (prompt_edit_url(current_url)) {
+        strcpy(cmd_buf, "AT+GEMINI=\"");
+        strcat(cmd_buf, current_url);
+        strcat(cmd_buf, "\"");
+        fetch_stream(u, cmd_buf);
+        ensure_link_visible();
+        update_screen(1);
+      }
       break;
 
     /* Vim: jump to top */
     case 'g':
-      doc_top = 0;
-      render_screen();
+    case KEY_HOME:
+      if (doc_top != 0) {
+        doc_top = 0;
+        update_screen(0);
+      }
       break;
 
     /* Vim: jump to bottom */
     case 'G':
+    case KEY_END:
       doc_top = total_lines - screen_lines;
       if (doc_top < 0)
         doc_top = 0;
-      render_screen();
+      if (doc_top != old_top)
+        update_screen(0);
       break;
 
     /* Redraw and re-detect terminal size */
     case KEY_CTRL_L:
       term_detect_size();
+      term_cursor_hide();
       ensure_link_visible();
-      render_screen();
+      update_screen(1);
       break;
 
     /* Tab: move selection to next URL/link */
     case KEY_TAB:
       if (total_links > 0) {
-        cur_link = (cur_link + 1) % total_links;
-        ensure_link_visible();
-        render_screen();
+        select_next_link();
+        update_screen(0);
       }
       break;
 
@@ -416,9 +284,8 @@ event_loop(u) unsigned char u;
     case 'p':
     case 'P':
       if (total_links > 0) {
-        cur_link = (cur_link - 1 + total_links) % total_links;
-        ensure_link_visible();
-        render_screen();
+        select_prev_link();
+        update_screen(0);
       }
       break;
 
@@ -426,13 +293,13 @@ event_loop(u) unsigned char u;
     case KEY_CR:
     case KEY_LF:
       if (total_links > 0 && cur_link >= 0 && cur_link < total_links) {
-        int lid = links[cur_link].id;
+        lid = links[cur_link].id;
         strcpy(cmd_buf, "AT+GO=");
         fmt_int(num_buf, lid);
         strcat(cmd_buf, num_buf);
         fetch_stream(u, cmd_buf);
         ensure_link_visible();
-        render_screen();
+        update_screen(1);
       }
       break;
 
@@ -442,7 +309,7 @@ event_loop(u) unsigned char u;
     case 'H':
       fetch_stream(u, "AT+BACK");
       ensure_link_visible();
-      render_screen();
+      update_screen(1);
       break;
 
     /* Reload current page */
@@ -454,7 +321,7 @@ event_loop(u) unsigned char u;
         strcat(cmd_buf, "\"");
         fetch_stream(u, cmd_buf);
         ensure_link_visible();
-        render_screen();
+        update_screen(1);
       }
       break;
 
@@ -462,58 +329,102 @@ event_loop(u) unsigned char u;
     case 'q':
     case 'Q':
     case KEY_CTRL_C:
+      spool_cleanup();
+      term_scroll_reset();
       term_goto(term_rows, 1);
       term_reset();
       term_clear_eol();
+      term_cursor_show();
       term_puts("\r\n");
       return;
     }
   }
 }
 
+usage() {
+  cio_printf("Usage: ZGMI [-u unit] [-s spool_kb] [-f spool_file] [-c cfg] <url>\n");
+  cio_printf("Options:\n");
+  cio_printf("  -u <unit>   RomWBW CIO serial unit for bridge (default: 1)\n");
+  cio_printf("  -s <kb>     Max disk spool size in KB, 0=off (default: 128)\n");
+  cio_printf("  -f <file>   Spool filename, e.g. B:ZGMI.$$$ (default: ZGMI.$$$)\n");
+  cio_printf("  -c <file>   Configuration file (default: ZGMI.CFG, A:ZGMI.CFG)\n");
+  cio_printf("Examples:\n");
+  cio_printf("  ZGMI gemini://geminiprotocol.net\n");
+  cio_printf("  ZGMI -u 1 -s 256 gemini.circumlunar.space\n");
+}
+
 main() {
-  char arg1[128];
-  char arg2[128];
-  char fetch_cmd[160];
-  char *url_ptr;
-  char *p;
+  int arg_idx = 0;
   unsigned char dev_cnt;
   unsigned char dtype, dmode, dbase;
 
-  cio_printf("\nZGMI v1.0 - Gemini Protocol Client (ZNetSuite)\n");
+  cio_printf("\nZGMI v1.1 - Gemini Protocol Client (ZNetSuite)\n");
 
   if (!hbios_detect()) {
     cio_printf("Error: RomWBW HBIOS not detected.\n");
     return 1;
   }
 
-  dev_cnt = (unsigned char)hbios_ciocnt();
-  target_unit = 1; /* Default to auxiliary serial port (Port B / Pico W) */
+  /* Load ZGMI.CFG from current drive, or fallback to A:ZGMI.CFG */
+  if (!load_config_file("ZGMI.CFG")) {
+    load_config_file("A:ZGMI.CFG");
+  }
+
+  cmd_buf[0] = '\0';
 
   /* Parse CP/M command tail */
-  if (fmt_cpm_arg(tail, 0, arg1, sizeof(arg1)) <= 0 || arg1[0] == '?' ||
-      (arg1[0] == '/' && arg1[1] == '?')) {
-    cio_printf("Usage: ZGMI [-u unit] <url>\n");
-    cio_printf("Examples:\n");
-    cio_printf("  ZGMI gemini://geminiprotocol.net\n");
-    cio_printf("  ZGMI gemini.circumlunar.space\n");
-    cio_printf("  ZGMI -u 1 geminiprotocol.net\n");
-    return 0;
-  }
-
-  /* Check for optional -u unit flag */
-  if (strcmp(arg1, "-u") == 0 || strcmp(arg1, "-U") == 0) {
-    if (fmt_cpm_arg(tail, 1, arg2, sizeof(arg2)) <= 0 ||
-        fmt_cpm_arg(tail, 2, arg1, sizeof(arg1)) <= 0) {
-      cio_printf("Error: Missing unit or URL for -u option.\n");
-      return 1;
+  while (fmt_cpm_arg(tail, arg_idx, rx_line, sizeof(rx_line)) > 0) {
+    if (strcmp(rx_line, "?") == 0 || strcmp(rx_line, "/?") == 0 ||
+        strcmp(rx_line, "-h") == 0 || strcmp(rx_line, "-H") == 0) {
+      usage();
+      return 0;
+    } else if (strcmp(rx_line, "-u") == 0 || strcmp(rx_line, "-U") == 0) {
+      if (fmt_cpm_arg(tail, ++arg_idx, val_buf, sizeof(val_buf)) <= 0) {
+        cio_printf("Error: Missing unit for -u option.\n");
+        return 1;
+      }
+      target_unit = (unsigned char)fmt_parse_num(val_buf);
+    } else if (strcmp(rx_line, "-s") == 0 || strcmp(rx_line, "-S") == 0) {
+      if (fmt_cpm_arg(tail, ++arg_idx, val_buf, sizeof(val_buf)) <= 0) {
+        cio_printf("Error: Missing size for -s option.\n");
+        return 1;
+      }
+      cfg_max_spool_kb = fmt_parse_int(val_buf);
+      if (cfg_max_spool_kb < 0)
+        cfg_max_spool_kb = 0;
+    } else if (strcmp(rx_line, "-f") == 0 || strcmp(rx_line, "-F") == 0) {
+      if (fmt_cpm_arg(tail, ++arg_idx, val_buf, sizeof(val_buf)) <= 0) {
+        cio_printf("Error: Missing filename for -f option.\n");
+        return 1;
+      }
+      strncpy(cfg_spool_file, val_buf, sizeof(cfg_spool_file) - 1);
+      cfg_spool_file[sizeof(cfg_spool_file) - 1] = '\0';
+    } else if (strcmp(rx_line, "-c") == 0 || strcmp(rx_line, "-C") == 0) {
+      if (fmt_cpm_arg(tail, ++arg_idx, val_buf, sizeof(val_buf)) <= 0) {
+        cio_printf("Error: Missing filename for -c option.\n");
+        return 1;
+      }
+      if (!load_config_file(val_buf)) {
+        cio_printf("Error: Could not open config file %s\n", val_buf);
+        return 1;
+      }
+    } else {
+      strncpy(cmd_buf, rx_line, sizeof(cmd_buf) - 1);
+      cmd_buf[sizeof(cmd_buf) - 1] = '\0';
     }
-    target_unit = (unsigned char)fmt_parse_hex(arg2);
-    url_ptr = arg1;
-  } else {
-    url_ptr = arg1;
+    arg_idx++;
   }
 
+  if (!cmd_buf[0]) {
+    if (cfg_home_url[0]) {
+      strcpy(cmd_buf, cfg_home_url);
+    } else {
+      usage();
+      return 0;
+    }
+  }
+
+  dev_cnt = (unsigned char)hbios_ciocnt();
   if (target_unit >= dev_cnt) {
     cio_printf(
         "Error: Device unit %02X out of range (system has %d CIO units)\n",
@@ -526,28 +437,12 @@ main() {
     return 1;
   }
 
-  /* Normalize URL: convert scheme and host portion to lowercase */
-  p = url_ptr;
-  if (strncasecmp(p, "GEMINI://", 9) == 0) {
-    p += 9;
-  }
-  while (*p && *p != '/') {
-    if (*p >= 'A' && *p <= 'Z') {
-      *p = *p + ('a' - 'A');
-    }
-    p++;
-  }
+  /* Initialize TPA RAM window and normalize URL */
+  spool_init_ram();
+  normalize_url(cmd_buf, current_url);
 
-  if (strncasecmp(url_ptr, "GEMINI://", 9) != 0) {
-    strcpy(current_url, "gemini://");
-    strcat(current_url, url_ptr);
-  } else {
-    strcpy(current_url, "gemini://");
-    strcat(current_url, url_ptr + 9);
-  }
-
-  fmt_hex8(arg2, target_unit, 0);
-  cio_printf("Connecting to bridge on CIO unit %s (%s)...\n", arg2,
+  fmt_hex8(val_buf, target_unit, 0);
+  cio_printf("Connecting to bridge on CIO unit %s (%s)...\n", val_buf,
              hbios_devname(dtype));
   if (!bridge_init(target_unit)) {
     cio_printf("Warning: No response to AT check; continuing anyway...\n");
@@ -556,15 +451,16 @@ main() {
   /* Query VT100 / ANSI terminal dimensions via DSR CPR */
   term_detect_size();
 
-  /* Clear screen */
+  /* Clear screen and hide cursor */
   term_cls();
+  term_cursor_hide();
 
   /* Prepare initial fetch command */
-  strcpy(fetch_cmd, "AT+GEMINI=\"");
-  strcat(fetch_cmd, current_url);
-  strcat(fetch_cmd, "\"");
+  strcpy(cmd_buf, "AT+GEMINI=\"");
+  strcat(cmd_buf, current_url);
+  strcat(cmd_buf, "\"");
 
-  fetch_stream(target_unit, fetch_cmd);
+  fetch_stream(target_unit, cmd_buf);
   ensure_link_visible();
 
   event_loop(target_unit);

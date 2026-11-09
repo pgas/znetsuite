@@ -33,6 +33,7 @@
 #define KEY_HOME           0x107
 #define KEY_END            0x108
 #define KEY_BTAB           0x109
+#define KEY_DEL            0x10A
 
 /* ANSI / VT100 Escape Sequences */
 #define TERM_CLS           "\033[2J\033[H"
@@ -89,6 +90,10 @@ extern term_cursor_hide();
 extern term_cursor_show();
 extern term_attr(/* char *attr_str */);
 extern term_reset();
+extern term_scroll_region(/* int top, int bot */);
+extern term_scroll_reset();
+extern term_scroll_up(/* int top, int bot */);
+extern term_scroll_down(/* int top, int bot */);
 
 /* Dynamic window dimension detection via VT100 CPR query */
 extern term_detect_size();
