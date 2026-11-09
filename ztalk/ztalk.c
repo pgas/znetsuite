@@ -12,19 +12,14 @@
 
 #define CTRLC 0x03
 
-/* Command tail at CP/M default buffer 0x0080 */
-static unsigned char *tail = (unsigned char *)0x0080;
-
 /* Terminal bridge loop */
-talk_bridge(target)
-unsigned char target;
+talk_bridge(target) unsigned char target;
 {
   int ch;
-  while (1) {
+  for (;;) {
     /* 1. Check target device for incoming byte */
     if (cio_ist(target)) {
-      ch = cio_in(target);
-      cio_out(CIO_CONSOLE, (unsigned char)ch);
+      cio_out(CIO_CONSOLE, (unsigned char)cio_in(target));
     }
 
     /* 2. Check console for user input */
@@ -51,7 +46,7 @@ main() {
   cnt = (unsigned char)hbios_ciocnt();
 
   /* Parse CP/M command tail */
-  if (fmt_cpm_arg(tail, 0, token, sizeof(token)) <= 0 ||
+  if (fmt_cpm_arg((unsigned char *)0x0080, 0, token, sizeof(token)) <= 0 ||
       token[0] == '?' || (token[0] == '/' && token[1] == '?')) {
     cio_printf("Usage: ZTALK <device_hex_id>\n");
     hbios_list_devices(cnt);
@@ -60,7 +55,8 @@ main() {
 
   target = (unsigned char)fmt_parse_hex(token);
   if (target >= cnt) {
-    cio_printf("Error: Device %02X out of range (max %02X)\n", (unsigned int)target, (int)(cnt - 1));
+    cio_printf("Error: Device %02X out of range (max %02X)\n",
+               (unsigned int)target, (int)(cnt - 1));
     hbios_list_devices(cnt);
     return 1;
   }

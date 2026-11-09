@@ -5,7 +5,7 @@
 ROMWBW ?= $(abspath ../RomWBW)
 export ROMWBW
 
-SUBDIRS = lib ztalk zgmi
+SUBDIRS = lib ztalk zgmi ztelnet
 
 all:
 	@for dir in $(SUBDIRS) ; do \

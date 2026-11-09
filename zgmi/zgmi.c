@@ -29,7 +29,8 @@ static char val_buf[128];
 static unsigned char *tail = (unsigned char *)0x0080;
 
 /* Initialize serial bridge: sync AT, ATE0, AT+PAGE=0 */
-int bridge_init(u) unsigned char u;
+int bridge_init(u)
+unsigned char u;
 {
   int attempt;
   cio_flush(u);
@@ -142,6 +143,16 @@ char *cmd;
   }
 }
 
+/* Fetch current_url over bridge and snap link visibility */
+static fetch_url(u) unsigned char u;
+{
+  strcpy(cmd_buf, "AT+GEMINI=\"");
+  strcat(cmd_buf, current_url);
+  strcat(cmd_buf, "\"");
+  fetch_stream(u, cmd_buf);
+  ensure_link_visible();
+}
+
 /* Main interaction loop */
 event_loop(u) unsigned char u;
 {
@@ -235,11 +246,7 @@ event_loop(u) unsigned char u;
     case 'e':
     case 'E':
       if (prompt_edit_url(current_url)) {
-        strcpy(cmd_buf, "AT+GEMINI=\"");
-        strcat(cmd_buf, current_url);
-        strcat(cmd_buf, "\"");
-        fetch_stream(u, cmd_buf);
-        ensure_link_visible();
+        fetch_url(u);
         update_screen(1);
       }
       break;
@@ -316,11 +323,7 @@ event_loop(u) unsigned char u;
     case 'r':
     case 'R':
       if (current_url[0]) {
-        strcpy(cmd_buf, "AT+GEMINI=\"");
-        strcat(cmd_buf, current_url);
-        strcat(cmd_buf, "\"");
-        fetch_stream(u, cmd_buf);
-        ensure_link_visible();
+        fetch_url(u);
         update_screen(1);
       }
       break;
@@ -342,21 +345,23 @@ event_loop(u) unsigned char u;
 }
 
 usage() {
-  cio_printf("Usage: ZGMI [-u unit] [-s spool_kb] [-f spool_file] [-c cfg] <url>\n");
-  cio_printf("Options:\n");
-  cio_printf("  -u <unit>   RomWBW CIO serial unit for bridge (default: 1)\n");
-  cio_printf("  -s <kb>     Max disk spool size in KB, 0=off (default: 128)\n");
-  cio_printf("  -f <file>   Spool filename, e.g. B:ZGMI.$$$ (default: ZGMI.$$$)\n");
-  cio_printf("  -c <file>   Configuration file (default: ZGMI.CFG, A:ZGMI.CFG)\n");
-  cio_printf("Examples:\n");
-  cio_printf("  ZGMI gemini://geminiprotocol.net\n");
-  cio_printf("  ZGMI -u 1 -s 256 gemini.circumlunar.space\n");
+  cio_printf(
+      "Usage: ZGMI [-u unit] [-s spool_kb] [-f spool_file] [-c cfg] <url>\n"
+      "Options:\n"
+      "  -u <unit>   RomWBW CIO serial unit for bridge (default: 1)\n"
+      "  -s <kb>     Max disk spool size in KB, 0=off (default: 128)\n"
+      "  -f <file>   Spool filename, e.g. B:ZGMI.$$$ (default: ZGMI.$$$)\n"
+      "  -c <file>   Configuration file (default: ZGMI.CFG, A:ZGMI.CFG)\n"
+      "Examples:\n"
+      "  ZGMI gemini://geminiprotocol.net\n"
+      "  ZGMI -u 1 -s 256 gemini.circumlunar.space\n");
 }
 
 main() {
   int arg_idx = 0;
   unsigned char dev_cnt;
   unsigned char dtype, dmode, dbase;
+  char opt;
 
   cio_printf("\nZGMI v1.1 - Gemini Protocol Client (ZNetSuite)\n");
 
@@ -374,39 +379,34 @@ main() {
 
   /* Parse CP/M command tail */
   while (fmt_cpm_arg(tail, arg_idx, rx_line, sizeof(rx_line)) > 0) {
-    if (strcmp(rx_line, "?") == 0 || strcmp(rx_line, "/?") == 0 ||
-        strcmp(rx_line, "-h") == 0 || strcmp(rx_line, "-H") == 0) {
+    if (strcmp(rx_line, "?") == 0 || strcmp(rx_line, "/?") == 0) {
       usage();
       return 0;
-    } else if (strcmp(rx_line, "-u") == 0 || strcmp(rx_line, "-U") == 0) {
+    }
+    if (rx_line[0] == '-' && rx_line[1] && rx_line[2] == '\0') {
+      opt = rx_line[1] | 0x20;
+      if (opt == 'h') {
+        usage();
+        return 0;
+      }
       if (fmt_cpm_arg(tail, ++arg_idx, val_buf, sizeof(val_buf)) <= 0) {
-        cio_printf("Error: Missing unit for -u option.\n");
+        cio_printf("Error: Missing argument for -%c\n", (int)opt);
         return 1;
       }
-      target_unit = (unsigned char)fmt_parse_num(val_buf);
-    } else if (strcmp(rx_line, "-s") == 0 || strcmp(rx_line, "-S") == 0) {
-      if (fmt_cpm_arg(tail, ++arg_idx, val_buf, sizeof(val_buf)) <= 0) {
-        cio_printf("Error: Missing size for -s option.\n");
-        return 1;
-      }
-      cfg_max_spool_kb = fmt_parse_int(val_buf);
-      if (cfg_max_spool_kb < 0)
-        cfg_max_spool_kb = 0;
-    } else if (strcmp(rx_line, "-f") == 0 || strcmp(rx_line, "-F") == 0) {
-      if (fmt_cpm_arg(tail, ++arg_idx, val_buf, sizeof(val_buf)) <= 0) {
-        cio_printf("Error: Missing filename for -f option.\n");
-        return 1;
-      }
-      strncpy(cfg_spool_file, val_buf, sizeof(cfg_spool_file) - 1);
-      cfg_spool_file[sizeof(cfg_spool_file) - 1] = '\0';
-    } else if (strcmp(rx_line, "-c") == 0 || strcmp(rx_line, "-C") == 0) {
-      if (fmt_cpm_arg(tail, ++arg_idx, val_buf, sizeof(val_buf)) <= 0) {
-        cio_printf("Error: Missing filename for -c option.\n");
-        return 1;
-      }
-      if (!load_config_file(val_buf)) {
-        cio_printf("Error: Could not open config file %s\n", val_buf);
-        return 1;
+      if (opt == 'u') {
+        target_unit = (unsigned char)fmt_parse_num(val_buf);
+      } else if (opt == 's') {
+        cfg_max_spool_kb = fmt_parse_int(val_buf);
+        if (cfg_max_spool_kb < 0)
+          cfg_max_spool_kb = 0;
+      } else if (opt == 'f') {
+        strncpy(cfg_spool_file, val_buf, sizeof(cfg_spool_file) - 1);
+        cfg_spool_file[sizeof(cfg_spool_file) - 1] = '\0';
+      } else if (opt == 'c') {
+        if (!load_config_file(val_buf)) {
+          cio_printf("Error: Could not open %s\n", val_buf);
+          return 1;
+        }
       }
     } else {
       strncpy(cmd_buf, rx_line, sizeof(cmd_buf) - 1);
@@ -441,9 +441,8 @@ main() {
   spool_init_ram();
   normalize_url(cmd_buf, current_url);
 
-  fmt_hex8(val_buf, target_unit, 0);
-  cio_printf("Connecting to bridge on CIO unit %s (%s)...\n", val_buf,
-             hbios_devname(dtype));
+  cio_printf("Connecting to bridge on CIO unit %02X (%s)...\n",
+             (unsigned int)target_unit, hbios_devname(dtype));
   if (!bridge_init(target_unit)) {
     cio_printf("Warning: No response to AT check; continuing anyway...\n");
   }
@@ -455,14 +454,8 @@ main() {
   term_cls();
   term_cursor_hide();
 
-  /* Prepare initial fetch command */
-  strcpy(cmd_buf, "AT+GEMINI=\"");
-  strcat(cmd_buf, current_url);
-  strcat(cmd_buf, "\"");
-
-  fetch_stream(target_unit, cmd_buf);
-  ensure_link_visible();
-
+  /* Initial fetch and enter interactive loop */
+  fetch_url(target_unit);
   event_loop(target_unit);
 
   return 0;

@@ -12,32 +12,32 @@ int arg_idx;
 char *buf;
 int maxlen;
 {
-  int taillen = tail[0];
-  int idx = 1;
-  int cur_arg = 0;
+  unsigned char *p = tail + 1;
+  unsigned char *end = p + *tail;
   int len = 0;
 
-  while (idx <= taillen) {
-    /* Skip whitespace */
-    while (idx <= taillen && (tail[idx] == ' ' || tail[idx] == '\t')) {
-      idx++;
+  while (p < end) {
+    while (p < end && (*p == ' ' || *p == '\t')) {
+      p++;
     }
-    if (idx > taillen) break;
+    if (p >= end)
+      break;
 
-    if (cur_arg == arg_idx) {
-      /* Extract target token */
-      while (idx <= taillen && tail[idx] != ' ' && tail[idx] != '\t' && len < maxlen - 1) {
-        buf[len++] = tail[idx++];
+    if (arg_idx == 0) {
+      while (p < end && *p != ' ' && *p != '\t') {
+        if (len < maxlen - 1) {
+          buf[len++] = (char)*p;
+        }
+        p++;
       }
       buf[len] = '\0';
       return len;
     }
 
-    /* Skip token */
-    while (idx <= taillen && tail[idx] != ' ' && tail[idx] != '\t') {
-      idx++;
+    while (p < end && *p != ' ' && *p != '\t') {
+      p++;
     }
-    cur_arg++;
+    arg_idx--;
   }
 
   buf[0] = '\0';

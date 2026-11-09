@@ -102,15 +102,12 @@ char *dst;
   char *p;
 
   src = fmt_trim(src);
-  if (strncasecmp(src, "GEMINI://", 9) != 0) {
-    strcpy(dst, "gemini://");
-    strncat(dst, src, 117);
-    dst[127] = '\0';
-  } else {
-    strcpy(dst, "gemini://");
-    strncat(dst, src + 9, 117);
-    dst[127] = '\0';
+  if (strncasecmp(src, "GEMINI://", 9) == 0) {
+    src += 9;
   }
+  strcpy(dst, "gemini://");
+  strncat(dst, src, 117);
+  dst[127] = '\0';
 
   p = dst + 9;
   while (*p && *p != '/') {
@@ -230,6 +227,21 @@ render_status() {
   term_clear_eol();
 }
 
+/* Redraw a link's row if its document line lies within [min_line, max_line) */
+static render_link_row(link_idx, min_line, max_line, base_top) int link_idx;
+int min_line;
+int max_line;
+int base_top;
+{
+  int l;
+  if (link_idx >= 0 && link_idx < total_links) {
+    l = links[link_idx].line;
+    if (l >= min_line && l < max_line) {
+      render_doc_row(2 + (l - base_top), l);
+    }
+  }
+}
+
 /* Differential screen update: minimizes serial traffic to prevent flicker */
 update_screen(force_full) int force_full;
 {
@@ -237,16 +249,13 @@ update_screen(force_full) int force_full;
   int screen_lines = term_rows - 2;
   int old_top = prev_doc_top;
   int old_link = prev_cur_link;
-  int oline;
-  int nline;
 
   ensure_window_loaded(doc_top, screen_lines);
 
   /* 1. Full redraw or multi-line jump */
   if (force_full || old_top < 0 ||
-      (doc_top != old_top &&
-       (!cfg_hw_scroll ||
-        (doc_top != old_top + 1 && doc_top != old_top - 1)))) {
+      (doc_top != old_top && (!cfg_hw_scroll || (doc_top != old_top + 1 &&
+                                                 doc_top != old_top - 1)))) {
     if (force_full || header_dirty) {
       render_header();
     }
@@ -262,18 +271,8 @@ update_screen(force_full) int force_full;
   /* 2. Same scroll position (e.g. Tab / Shift-Tab link selection change) */
   if (doc_top == old_top) {
     if (old_link != cur_link) {
-      if (old_link >= 0 && old_link < total_links) {
-        oline = links[old_link].line;
-        if (oline >= doc_top && oline < doc_top + screen_lines) {
-          render_doc_row(2 + (oline - doc_top), oline);
-        }
-      }
-      if (cur_link >= 0 && cur_link < total_links) {
-        nline = links[cur_link].line;
-        if (nline >= doc_top && nline < doc_top + screen_lines) {
-          render_doc_row(2 + (nline - doc_top), nline);
-        }
-      }
+      render_link_row(old_link, doc_top, doc_top + screen_lines, doc_top);
+      render_link_row(cur_link, doc_top, doc_top + screen_lines, doc_top);
     }
     render_status();
     prev_cur_link = cur_link;
@@ -282,19 +281,13 @@ update_screen(force_full) int force_full;
 
   /* 3. Hardware 1-line scroll down (doc_top == old_top + 1) */
   if (doc_top == old_top + 1) {
-    if (old_link != cur_link && old_link >= 0 && old_link < total_links) {
-      oline = links[old_link].line;
-      if (oline >= doc_top && oline < old_top + screen_lines) {
-        render_doc_row(2 + (oline - old_top), oline);
-      }
+    if (old_link != cur_link) {
+      render_link_row(old_link, doc_top, old_top + screen_lines, old_top);
     }
     term_scroll_up(2, term_rows - 1);
     render_doc_row(term_rows - 1, doc_top + screen_lines - 1);
-    if (old_link != cur_link && cur_link >= 0 && cur_link < total_links) {
-      nline = links[cur_link].line;
-      if (nline >= doc_top && nline < doc_top + screen_lines - 1) {
-        render_doc_row(2 + (nline - doc_top), nline);
-      }
+    if (old_link != cur_link) {
+      render_link_row(cur_link, doc_top, doc_top + screen_lines - 1, doc_top);
     }
     render_status();
     prev_doc_top = doc_top;
@@ -304,19 +297,13 @@ update_screen(force_full) int force_full;
 
   /* 4. Hardware 1-line scroll up (doc_top == old_top - 1) */
   if (doc_top == old_top - 1) {
-    if (old_link != cur_link && old_link >= 0 && old_link < total_links) {
-      oline = links[old_link].line;
-      if (oline >= old_top && oline < doc_top + screen_lines) {
-        render_doc_row(2 + (oline - old_top), oline);
-      }
+    if (old_link != cur_link) {
+      render_link_row(old_link, old_top, doc_top + screen_lines, old_top);
     }
     term_scroll_down(2, term_rows - 1);
     render_doc_row(2, doc_top);
-    if (old_link != cur_link && cur_link >= 0 && cur_link < total_links) {
-      nline = links[cur_link].line;
-      if (nline > doc_top && nline < doc_top + screen_lines) {
-        render_doc_row(2 + (nline - doc_top), nline);
-      }
+    if (old_link != cur_link) {
+      render_link_row(cur_link, doc_top + 1, doc_top + screen_lines, doc_top);
     }
     render_status();
     prev_doc_top = doc_top;
@@ -326,8 +313,7 @@ update_screen(force_full) int force_full;
 }
 
 /* Draw the URL editor bar on the line above the helpbar (term_rows - 1) */
-static draw_url_edit(buf, pos, max_vis) char *buf;
-int pos;
+static draw_url_edit(pos, max_vis) int pos;
 int max_vis;
 {
   int edit_row = term_rows - 1;
@@ -344,8 +330,8 @@ int max_vis;
   term_reset();
   term_putc(' ');
 
-  while (buf[start + i] && i < max_vis) {
-    term_putc((unsigned char)buf[start + i]);
+  while (edit_buf[start + i] && i < max_vis) {
+    term_putc((unsigned char)edit_buf[start + i]);
     i++;
   }
   term_clear_eol();
@@ -356,7 +342,8 @@ int max_vis;
  * Returns 1 and writes normalized URL to out_url if user pressed Enter,
  * or returns 0 if user cancelled with Esc / Ctrl-C.
  */
-int prompt_edit_url(out_url) char *out_url;
+int prompt_edit_url(out_url)
+char *out_url;
 {
   int edit_row = term_rows - 1;
   int len;
@@ -373,9 +360,10 @@ int prompt_edit_url(out_url) char *out_url;
   if (max_vis < 20)
     max_vis = 20;
 
-  show_status("Enter:open | Esc:cancel | BS/Del:erase | ^U:clear | ^W:del-part");
+  show_status(
+      "Enter:open | Esc:cancel | BS/Del:erase | ^U:clear | ^W:del-part");
   term_cursor_show();
-  draw_url_edit(edit_buf, pos, max_vis);
+  draw_url_edit(pos, max_vis);
 
   for (;;) {
     key = term_getkey();
@@ -408,7 +396,6 @@ int prompt_edit_url(out_url) char *out_url;
         }
         pos--;
         len--;
-        draw_url_edit(edit_buf, pos, max_vis);
       }
     } else if (key == KEY_DEL || key == KEY_CTRL_D) {
       if (pos < len) {
@@ -416,13 +403,11 @@ int prompt_edit_url(out_url) char *out_url;
           edit_buf[i] = edit_buf[i + 1];
         }
         len--;
-        draw_url_edit(edit_buf, pos, max_vis);
       }
     } else if (key == KEY_CTRL_U) {
       edit_buf[0] = '\0';
       len = 0;
       pos = 0;
-      draw_url_edit(edit_buf, pos, max_vis);
     } else if (key == 0x17) { /* Ctrl-W: delete last path segment */
       if (pos > 0) {
         old_pos = pos;
@@ -434,24 +419,17 @@ int prompt_edit_url(out_url) char *out_url;
           edit_buf[pos + i] = edit_buf[old_pos + i];
         }
         len -= (old_pos - pos);
-        draw_url_edit(edit_buf, pos, max_vis);
       }
     } else if (key == KEY_LEFT || key == KEY_CTRL_B) {
-      if (pos > 0) {
+      if (pos > 0)
         pos--;
-        draw_url_edit(edit_buf, pos, max_vis);
-      }
     } else if (key == KEY_RIGHT || key == KEY_CTRL_F) {
-      if (pos < len) {
+      if (pos < len)
         pos++;
-        draw_url_edit(edit_buf, pos, max_vis);
-      }
     } else if (key == KEY_HOME || key == KEY_CTRL_A) {
       pos = 0;
-      draw_url_edit(edit_buf, pos, max_vis);
     } else if (key == KEY_END || key == KEY_CTRL_E) {
       pos = len;
-      draw_url_edit(edit_buf, pos, max_vis);
     } else if (key >= 32 && key <= 126 && len < 125) {
       for (i = len; i >= pos; i--) {
         edit_buf[i + 1] = edit_buf[i];
@@ -459,8 +437,7 @@ int prompt_edit_url(out_url) char *out_url;
       edit_buf[pos] = (char)key;
       pos++;
       len++;
-      draw_url_edit(edit_buf, pos, max_vis);
     }
+    draw_url_edit(pos, max_vis);
   }
 }
-

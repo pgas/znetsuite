@@ -159,12 +159,8 @@ int load_config_file(fname) char *fname;
   while (cpm_bdos(BDOS_READ, &cfg_fcb) == 0) {
     for (i = 0; i < 128; i++) {
       ch = spool_dma[i];
-      if (ch == 0x1A) {
-        io_line_buf[pos] = '\0';
-        parse_config_line(io_line_buf);
-        cpm_bdos(BDOS_CLOSE, &cfg_fcb);
-        return 1;
-      }
+      if (ch == 0x1A)
+        goto done;
       if (ch == '\r')
         continue;
       if (ch == '\n') {
@@ -175,9 +171,9 @@ int load_config_file(fname) char *fname;
         io_line_buf[pos++] = (char)ch;
       }
     }
-    cpm_bdos(BDOS_DMA, spool_dma);
   }
 
+done:
   if (pos > 0) {
     io_line_buf[pos] = '\0';
     parse_config_line(io_line_buf);

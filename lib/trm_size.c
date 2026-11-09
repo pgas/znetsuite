@@ -23,8 +23,8 @@ term_detect_size() {
     cio_in(CIO_CONSOLE);
   }
 
-  /* Move cursor to bottom-right boundary and query position */
-  term_puts("\033[999;999H\033[6n");
+  /* Save cursor, move to bottom-right boundary, query CPR, restore cursor */
+  term_puts("\0337\033[999;999H\033[6n\0338");
 
   /* Read response: ESC [ <row> ; <col> R */
   for (timeout = 0; timeout < 50000L; timeout++) {

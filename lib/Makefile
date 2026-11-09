@@ -10,8 +10,9 @@ include $(ROOT_DIR)/rules.mk
 SRCS = trm_scrl.c trm_goto.c trm_size.c trm_key.c trm_base.c \
        hb_list.c hb_det.c hb_cnt.c hb_dev.c hb_name.c \
        fmt_cpm.c fmt_size.c fmt_pnum.c fmt_phex.c fmt_pint.c \
-       fmt_int.c fmt_uint.c fmt_hex.c fmt_trim.c fmt_case.c \
-       cpm_fcb.c cpm_bdos.c \
+       fmt_int.c fmt_uint.c fmt_hex.c fmt_hx16.c fmt_trim.c \
+       fmt_case.c fmt_upr.c \
+       cpm_fcb.c cpm_bdos.c cpm_exit.c \
        cio_cmd.c cio_ok.c cio_line.c cio_to.c cio_flsh.c \
        cio_prtf.c cio_puts.c cio_wri.c \
        cio_in.c cio_out.c cio_ist.c cio_ost.c
@@ -25,7 +26,9 @@ $(BUILD_DIR)/%.obj: %.c $(wildcard $(INCLUDE_DIR)/*.h)
 	@rm -f $@ $(BUILD_DIR)/$*.OBJ
 	@ln -sf $(INCLUDE_DIR)/*.h $(BUILD_DIR)/
 	@printf "[  C    ] ==> %-30s " "$*.obj"
-	@OUT=$$(cd $(BUILD_DIR) && $(ZXCC) $(CC) --C $(HITECHOPTIONS) $(abspath $<) 2>&1); \
+	@OPT="$(HITECHOPTIONS)"; \
+	if grep -q '#asm' $<; then OPT="$(HITECHASMOPTIONS)"; fi; \
+	OUT=$$(cd $(BUILD_DIR) && $(ZXCC) $(CC) --C $$OPT $(abspath $<) 2>&1); \
 	$(call HITECHSTATUS,[ -s $@ ] || [ -s $(BUILD_DIR)/$*.OBJ ])
 
 $(LIB_TARGET): $(OBJS)

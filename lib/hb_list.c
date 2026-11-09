@@ -10,9 +10,10 @@ hbios_list_devices(cnt) unsigned char cnt;
 {
   unsigned char u, type, mode, base;
 
-  cio_printf("\nAvailable Character Devices (%d):\n", (int)cnt);
-  cio_printf(" Unit | Type                 | Base Port\n");
-  cio_printf("------+----------------------+----------\n");
+  cio_printf("\nAvailable Character Devices (%d):\n"
+             " Unit | Type                 | Base Port\n"
+             "------+----------------------+----------\n",
+             (int)cnt);
   for (u = 0; u < cnt; u++) {
     if (hbios_device(u, &type, &mode, &base) == 0) {
       cio_printf("  %02X  | %-20s |    %02X\n", (unsigned int)u,

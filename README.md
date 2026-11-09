@@ -27,6 +27,7 @@ make clean
 
 - **`ztalk`**: partial rewrite of RomWBW HTalk in C.
 - **`zgmi`**: Gemini protocol client.
+- **`ztelnet`**: RFC 854 Telnet client for Hayes `ATDT` serial modems.
 
 ## AI Assistance
 

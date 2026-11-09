@@ -94,3 +94,39 @@ This document captures the architectural rules, compiler/linker constraints, mem
    - Over serial lines and in unthrottled Z80 simulators, the bytes of `\033[A`, `\033[3~` (`Delete`), `\033[5~` (`PgUp`), and `\033[6~` (`PgDn`) arrive asynchronously.
    - Always use a bounded polling loop (`term_wait_seq`) for every byte of an escape sequence—including the trailing `'~'`—and return `0` (not `KEY_ESC`) for unrecognized `\033[...` sequences so unknown keys never falsely trigger `Esc`/Cancel actions.
 
+---
+
+## 7. Executable Size Auditing, Link Map Profiling & Avoiding `zxcc` Busy Loops
+
+1. **Mandatory Size Review After Adding Features:**
+   - Whenever adding a feature or refactoring code increases a `.com` executable's size, **always** compare `ls -la bin/*.com` before and after, generate a `LINQ` link map, and actively look for size optimizations before finishing the task.
+   - Check both **on-disk binary size** (`text + data`) and **static RAM footprint** (`__Hbss = text + data + bss`) in the link map to ensure 32K TPA compatibility is preserved.
+
+2. **How to Avoid 100% CPU `zxcc` Busy Loops & Compiler Hangs:**
+   - **Cause A (`OPTIM.COM` on `#asm` Files):** Never run HI-TECH C's peephole optimizer (`--O` / `OPTIM.COM`) on `.c` files containing `#asm` blocks:
+     1. `OPTIM.COM`'s number parser enters an infinite 100% CPU loop inside `zxcc` when it encounters assembly hex constants like `0F8H` or `0005H`.
+     2. Even with decimal constants, `OPTIM.COM`'s dead-register analysis does not know that `rst 8` (HBIOS) or `call 0005H` (BDOS) reads `BC`/`DE`, and will silently delete `ld b,...` / `ld c,...` instructions before the syscall!
+     - **Rule:** Always compile `#asm` files with `HITECHASMOPTIONS = --N` (enforced via `if grep -q '#asm' $<; then OPT="$(HITECHASMOPTIONS)"; fi` in `Makefile`).
+   - **Cause B (CP/M 127-Char Command Tail Overflow in `LIBR` & `LINQ`):** CP/M's command tail buffer at `0x0080` is strictly limited to **127 characters**. When a command line exceeds this limit inside `zxcc`, it is truncated; tools like `LIBR.COM` or `LINQ.COM` then drop into an interactive prompt loop waiting for console `stdin` inside the unthrottled Z80 emulator, burning 100% CPU indefinitely.
+     - **Rule 1 (`LIBR`):** Never pass all `.obj` files to `LIBR.COM` in a single command. Always archive one `.obj` at a time in a shell loop (as in `lib/Makefile`: `$(ZXCC) $(LIBR) -r -libznet.lib -$$obj`).
+     - **Rule 2 (`LINQ` Link Maps):** Never append `--Mfile.map` to `$(ZXCC) $(CC) --V --N ...`, because `C.COM` expands drive prefixes (`P:ZGMI.OBJ P:UI.OBJ ...`) and truncates the `LINQ` command line (`D: : Can't open`). Instead, invoke `LINQ` directly inside `build/<module>/` using short relative filenames and redirect `< /dev/null` so any unexpected prompt exits immediately:
+       ```sh
+       cd build/zgmi && $(ZXCC) $(HITECHDIR)/LINQ --Z --Mzgmi.map \
+         --Ptext=0,data,bss --C100H --Ozgmi.com \
+         $(HITECHDIR)/NRTCPM.OBJ zgmi.obj ui.obj spool.obj \
+         ../lib/libznet.lib $(HITECHDIR)/LIBC.LIB < /dev/null
+       ```
+     - **Rule 3 (Clean Up Map Files):** Remove temporary `.map` files from `build/` once analysis is complete.
+
+3. **Z80 Code & Data Size Optimization Checklist:**
+   - **Compiler Optimizer (`HITECHOPTIONS = --O --N --D_ZNET=1` in `rules.mk`):**
+     - Always keep `--O` enabled for pure-C files so `C.COM` runs `OPTIM.COM` and passes `-J` to `ZAS.COM` (converting 3-byte `JP` instructions into 2-byte `JR` relative branches, saving ~25–30% across all `text` segments).
+     - Keep `--D_ZNET=1` in `HITECHOPTIONS`: in `C.COM` V3.09-19, adding `--O` inserts `OPTIM.COM` into `$$exec.$$$`, causing 2–5 character filenames (`zgmi.c`, `ui.c`, `spool.c`, `ztalk.c`) to land on a buggy 384-byte (`0x180`) sector boundary that truncates the `ZAS.COM` command (`Illegal switch` / `No file arguments`). The `--D_ZNET=1` define pads the `CPP` entry past the boundary so all 1–8 character filenames compile cleanly.
+   - **Suppress `LIBC.LIB` Exit/FD/Errno Bloat (`lib/cpm_exit.c`):** `NRTCPM.OBJ` references `__initrsx` and `_exit`. Keep `lib/cpm_exit.c` in `libznet.lib` so `LINQ` resolves those symbols before scanning `LIBC.LIB`, preventing `exit.obj`, `cleanup.obj`, `close.obj`, `getuid.obj`, `bdos.obj`, and `sys_err.obj` (~1.2 KB of unused Unix FD tables and `errno` strings) from being linked.
+   - **Strict Single-Function Granularity in `lib/`:** If a `.c` file in `lib/` contains two functions and a binary only needs one (e.g., `fmt_hex8` in `fmt_hex.c` vs. `fmt_hex16` in `fmt_hx16.c`, or `fmt_lwr` in `fmt_case.c` vs. `fmt_upr` in `fmt_upr.c`), split them into separate 8.3 `.c` files so `LINQ` never pulls dead functions into `.com` binaries.
+   - **Minimize Z80 Call & Stack-Push Overhead:** Every C function call on Z80 pushes 2 bytes per argument plus a 3-byte `CALL` and stack-pointer adjustment.
+     - Hoist common tail calls out of `if / else if` chains (e.g., call a UI redraw helper once at the bottom of an input loop instead of in every key branch).
+     - Combine multi-line help/banner output into a single `cio_printf("...\n...\n")` string literal rather than issuing separate `cio_printf` calls per line.
+     - Reuse existing `cio_printf` format specifiers (`%02X`, `%d`, `%s`) instead of pulling in standalone `fmt_hex8` buffer-formatting routines when formatting only for console output.
+
+
