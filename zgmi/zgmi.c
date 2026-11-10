@@ -28,6 +28,14 @@ static char val_buf[128];
 /* Pointer to CP/M command tail buffer */
 static unsigned char *tail = (unsigned char *)0x0080;
 
+/* Send AT command and wait for OK/ERROR response */
+static int send_at(u, cmd) unsigned char u;
+char *cmd;
+{
+  cio_send_cmd(u, cmd);
+  return cio_wait_ok(u, 15000L);
+}
+
 /* Initialize serial bridge: sync AT, ATE0, AT+PAGE=0 */
 int bridge_init(u)
 unsigned char u;
@@ -36,19 +44,23 @@ unsigned char u;
   cio_flush(u);
 
   for (attempt = 0; attempt < 3; attempt++) {
-    cio_send_cmd(u, "AT");
-    if (cio_wait_ok(u, 20000L))
+    if (send_at(u, "AT"))
       break;
   }
 
-  cio_send_cmd(u, "ATE0");
-  cio_wait_ok(u, 20000L);
-
-  cio_send_cmd(u, "AT+PAGE=0");
-  cio_wait_ok(u, 20000L);
-
+  send_at(u, "ATE0");
+  send_at(u, "AT+PAGE=0");
   cio_flush(u);
   return 1;
+}
+
+/* Restore serial bridge command echo and saved profile on exit */
+static bridge_restore(u) unsigned char u;
+{
+  cio_flush(u);
+  send_at(u, "ATE1");
+  send_at(u, "ATZ");
+  cio_flush(u);
 }
 
 /* Fetch and process a command stream from bridge */
@@ -333,6 +345,7 @@ event_loop(u) unsigned char u;
     case 'Q':
     case KEY_CTRL_C:
       spool_cleanup();
+      bridge_restore(u);
       term_scroll_reset();
       term_goto(term_rows, 1);
       term_reset();

@@ -168,6 +168,14 @@ static parse_target(arg) char *arg;
   copy_str(cfg_host, p, sizeof(cfg_host));
 }
 
+/* Send AT command and wait for OK/ERROR response */
+static int send_at(u, cmd) unsigned char u;
+char *cmd;
+{
+  cio_send_cmd(u, cmd);
+  return cio_wait_ok(u, 15000L);
+}
+
 /* Escape online modem mode via +++ and send ATH */
 static bridge_hangup(u) unsigned char u;
 {
@@ -182,8 +190,7 @@ static bridge_hangup(u) unsigned char u;
       break;
   }
 
-  cio_send_cmd(u, "ATH");
-  cio_wait_ok(u, 20000L);
+  send_at(u, "ATH");
   cio_flush(u);
 }
 
@@ -195,8 +202,7 @@ static int bridge_init(u) unsigned char u;
 
   cio_flush(u);
   for (attempt = 0; attempt < 3; attempt++) {
-    cio_send_cmd(u, "AT");
-    if (cio_wait_ok(u, 15000L)) {
+    if (send_at(u, "AT")) {
       ok = 1;
       break;
     }
@@ -205,19 +211,23 @@ static int bridge_init(u) unsigned char u;
   if (!ok) {
     /* Modem might still be online from an interrupted session */
     bridge_hangup(u);
-    cio_send_cmd(u, "AT");
-    ok = cio_wait_ok(u, 15000L);
+    ok = send_at(u, "AT");
   }
 
-  cio_send_cmd(u, "ATE0");
-  cio_wait_ok(u, 15000L);
-
+  send_at(u, "ATE0");
   /* Disable ttl2wifi screen pager if supported (ignored on generic modems) */
-  cio_send_cmd(u, "AT+PAGE=0");
-  cio_wait_ok(u, 15000L);
-
+  send_at(u, "AT+PAGE=0");
   cio_flush(u);
   return ok;
+}
+
+/* Restore modem command echo and saved profile on exit */
+static bridge_restore(u) unsigned char u;
+{
+  cio_flush(u);
+  send_at(u, "ATE1");
+  send_at(u, "ATZ");
+  cio_flush(u);
 }
 
 /* Dial target host:port via ATDT<host>:<port> and wait for CONNECT */
@@ -443,5 +453,6 @@ main() {
     cio_printf("\nZTELNET disconnected.\n");
   }
 
+  bridge_restore(target_unit);
   return 0;
 }
